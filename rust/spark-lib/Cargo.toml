@@ -23,3 +23,10 @@ image.workspace = true
 hnsw.workspace = true
 rand_pcg.workspace = true
 space.workspace = true
+zstd.workspace = true
+
+# ruzstd is dev-only now (codec comparison in examples/codec_bench.rs). libzstd (the
+# `zstd` crate, above) is the runtime zstd decoder: ~3.8x faster than ruzstd in real
+# wasm and, unlike zrip, decodes correctly on wasm32. See bench/REPORT.md.
+[dev-dependencies]
+ruzstd.workspace = true

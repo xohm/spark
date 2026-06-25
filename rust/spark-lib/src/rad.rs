@@ -246,6 +246,20 @@ pub enum RadChunkPropertyEncoding {
 #[serde(rename_all = "lowercase")]
 pub enum RadChunkPropertyCompression {
     Gz,
+    Zstd,
+}
+
+// Decompress a single zstd frame (the solos `.rad` extension; spark only writes
+// gz). Uses libzstd via the `zstd` crate — the reference C decoder compiled into
+// the wasm. Verified to link + run on wasm32 and decode ~3.8x faster than ruzstd
+// in real wasm (891 vs 234 MB/s on a real SH3 frame), and faster than the gz/
+// miniz_oxide path. `decode_all` streams + auto-sizes (mirrors the self-sizing gz
+// path). Rejected alternatives: ruzstd (≈ gz speed in wasm); zrip-decode (faster
+// natively but corrupts/panics as wasm32 — "corrupt Huffman stream", so unusable
+// in the browser). Build needs clang targeting wasm (compiles libzstd C → wasm).
+fn decompress_zstd(data: &[u8]) -> anyhow::Result<Vec<u8>> {
+    zstd::stream::decode_all(data)
+        .map_err(|e| anyhow::anyhow!("Failed to decompress zstd data: {e}"))
 }
 
 impl<T: SplatGetter> RadEncoder<T> {
@@ -1620,7 +1634,7 @@ impl<T: SplatReceiver> RadDecoder<T> {
             let data = if let Some(compression) = prop.compression.as_ref() {
                 match compression {
                     RadChunkPropertyCompression::Gz => &decompress_to_vec(data).map_err(|_e| anyhow::anyhow!("Failed to decompress gz data"))?,
-                    // _ => return Err(anyhow::anyhow!("Unsupported compression: {:?}", compression)),
+                    RadChunkPropertyCompression::Zstd => &decompress_zstd(data)?,
                 }
             } else {
                 data
@@ -1822,5 +1836,31 @@ impl<T: SplatReceiver> ChunkReceiver for RadDecoder<T> {
         }
         self.splats.finish()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod zstd_decode_tests {
+    use super::decompress_zstd;
+
+    // Plaintext + zstd frames (level 12 = the encoder's zstdLevel default),
+    // generated under tests/fixtures. Two frames cover both the with- and
+    // without-content-size header cases: the decode must not depend on it
+    // (the encoder may or may not emit the optional content-size field).
+    const RAW: &[u8] =
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/prop.bin"));
+
+    #[test]
+    fn decodes_zstd_frame_with_content_size() {
+        let frame =
+            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/prop.zst"));
+        assert_eq!(decompress_zstd(frame).unwrap(), RAW);
+    }
+
+    #[test]
+    fn decodes_zstd_frame_without_content_size() {
+        let frame =
+            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/prop_nosize.zst"));
+        assert_eq!(decompress_zstd(frame).unwrap(), RAW);
     }
 }
