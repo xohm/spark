@@ -2,6 +2,21 @@ import { dyno } from '.';
 import { SplatSource } from './SplatMesh';
 import { ExtResult, PackedResult, RadMeta, SplatEncoding, SplatFileType } from './defines';
 import * as THREE from "three";
+/**
+ * Supplies a RAD file's bytes, in place of Spark fetching ranges from a URL.
+ *
+ * Called with a byte range of the file: `(offset, bytes)` asks for
+ * `bytes` bytes starting at `offset`, and both undefined asks for the whole
+ * file. Returning FEWER bytes than asked for is allowed and means the range
+ * ran past the end of the file - the header probe uses that to stop early on
+ * a small file - but returning more is not.
+ *
+ * This is the hook for a RAD that is not a plain ranged URL: one stored
+ * inside a container or archive, one in OPFS or IndexedDB, one behind
+ * bespoke authentication, or a local file the user picked, which has no URL
+ * at all and can be read with `File.slice`.
+ */
+export type FetchBytes = (offset?: number, bytes?: number) => Promise<Uint8Array>;
 export interface PagedSplatsOptions {
     pager?: SplatPager;
     rootUrl?: string;
@@ -9,6 +24,12 @@ export interface PagedSplatsOptions {
     withCredentials?: boolean;
     fileBytes?: Uint8Array;
     fileType?: SplatFileType;
+    /**
+     * Read the file's bytes through this instead of fetching `rootUrl`. RAD
+     * only, and `fileType` must be given because the type cannot be sniffed
+     * before the first read. Sibling-file chunked RAD is not supported.
+     */
+    fetchBytes?: FetchBytes;
     maxSh?: number;
 }
 export declare class PagedSplats implements SplatSource {
@@ -18,6 +39,7 @@ export declare class PagedSplats implements SplatSource {
     withCredentials?: boolean;
     fileBytes?: Uint8Array;
     fileType?: SplatFileType;
+    fetchBytes?: FetchBytes;
     numSh: number;
     maxSh: number;
     sh1Codes?: Uint32Array;
