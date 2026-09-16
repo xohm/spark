@@ -2,6 +2,35 @@ import { dyno } from '.';
 import { SplatSource } from './SplatMesh';
 import { ExtResult, PackedResult, RadMeta, SplatEncoding, SplatFileType } from './defines';
 import * as THREE from "three";
+/**
+ * One range read of a RAD file, as PagedSplats asks for it.
+ *
+ * `url` is the file to read: `rootUrl`, or the sibling file of a chunked RAD.
+ * It is undefined when PagedSplats was given no `rootUrl`, which is the case
+ * where the consumer itself is the source of the bytes - a member inside a
+ * container, a `File` the user picked, OPFS, IndexedDB.
+ *
+ * `offset` and `bytes` are the range; both undefined asks for the whole file.
+ * `requestHeader` and `withCredentials` are the ones PagedSplats was built
+ * with, passed on so a replacement can honour them. `signal` is the
+ * PagedSplats' own, aborted on dispose.
+ */
+export interface FetchRangeRequest {
+    url?: string;
+    offset?: number;
+    bytes?: number;
+    requestHeader?: Record<string, string>;
+    withCredentials?: boolean;
+    signal?: AbortSignal;
+}
+/**
+ * Supplies the bytes of a range, in place of Spark's own ranged fetch.
+ *
+ * Returning FEWER bytes than asked for is allowed and means the range ran
+ * past the end of the file - the header probe uses that to stop early on a
+ * small file - but returning more is not.
+ */
+export type FetchRange = (req: FetchRangeRequest) => Promise<Uint8Array>;
 export interface PagedSplatsOptions {
     pager?: SplatPager;
     rootUrl?: string;
@@ -9,6 +38,15 @@ export interface PagedSplatsOptions {
     withCredentials?: boolean;
     fileBytes?: Uint8Array;
     fileType?: SplatFileType;
+    /**
+     * Read every range through this instead of Spark's own ranged fetch:
+     * decryption, signed requests, a custom CDN, a test double, or a source
+     * that has no URL at all. RAD only.
+     *
+     * With no `rootUrl`, `fileType` must be given - there are no bytes to sniff
+     * before the first read - and the request's `url` is undefined.
+     */
+    fetchRange?: FetchRange;
     maxSh?: number;
 }
 export declare class PagedSplats implements SplatSource {
@@ -18,6 +56,7 @@ export declare class PagedSplats implements SplatSource {
     withCredentials?: boolean;
     fileBytes?: Uint8Array;
     fileType?: SplatFileType;
+    fetchRange?: FetchRange;
     numSh: number;
     maxSh: number;
     sh1Codes?: Uint32Array;
@@ -39,6 +78,8 @@ export declare class PagedSplats implements SplatSource {
     constructor(options: PagedSplatsOptions);
     dispose(): void;
     setMaxSh(maxSh: number): void;
+    /** One range read, through the consumer's hook when it set one. */
+    private readRange;
     getRadMeta(): Promise<{
         meta: RadMeta;
         chunksStart: number;
