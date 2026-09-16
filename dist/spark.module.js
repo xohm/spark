@@ -11055,7 +11055,7 @@ class PagedSplats {
     this.dynoNumSh = new DynoInt({ value: 0 });
     this.shMax = new DynoVec3({ value: new THREE.Vector3() });
     this.fileBytes = options.fileBytes;
-    this.fetchBytes = options.fetchBytes;
+    this.fetchRange = options.fetchRange;
     this.fileType = options.fileType;
     if (!this.fileType && this.fileBytes) {
       this.fileType = getSplatFileType(this.fileBytes);
@@ -11065,7 +11065,7 @@ class PagedSplats {
     }
     if (!this.fileType) {
       throw new Error(
-        this.fetchBytes ? "fetchBytes cannot be sniffed for a file type: pass fileType" : "Unable to determine file type"
+        this.fetchRange && !this.rootUrl ? "A fetchRange source cannot be sniffed for a file type: pass fileType" : "Unable to determine file type"
       );
     }
     if (this.fileType === SplatFileType.RAD) {
@@ -11082,6 +11082,22 @@ class PagedSplats {
   setMaxSh(maxSh) {
     this.maxSh = maxSh;
   }
+  /** One range read, through the consumer's hook when it set one. */
+  readRange(req) {
+    const full = {
+      requestHeader: this.requestHeader,
+      withCredentials: this.withCredentials,
+      signal: this.abortController.signal,
+      ...req
+    };
+    if (this.fetchRange) {
+      return this.fetchRange(full);
+    }
+    if (full.url === void 0) {
+      throw new Error("No url, fileBytes or fetchRange provided");
+    }
+    return fetchRange({ ...full, url: full.url });
+  }
   getRadMeta() {
     if (this.radMetaPromise) {
       return this.radMetaPromise;
@@ -11095,33 +11111,21 @@ class PagedSplats {
         }
         throw new Error("Failed to decode RAD header");
       }
-      if (this.fetchBytes) {
-        for (const tryBytes of [65536, 256 * 1024, 1024 * 1024]) {
-          const bytes = await this.fetchBytes(0, tryBytes);
-          const metaStart = decode_rad_header(bytes);
-          if (metaStart) {
-            return metaStart;
-          }
-          if (bytes.length < tryBytes) {
-            break;
-          }
-        }
-        throw new Error("Failed to decode RAD header");
-      }
-      if (!this.rootUrl) {
-        throw new Error("No url, fileBytes or fetchBytes provided");
+      if (!this.rootUrl && !this.fetchRange) {
+        throw new Error("No url, fileBytes or fetchRange provided");
       }
       for (const tryBytes of [65536, 256 * 1024, 1024 * 1024]) {
-        const bytes = await fetchRange({
+        const bytes = await this.readRange({
           url: this.rootUrl,
-          requestHeader: this.requestHeader,
-          withCredentials: this.withCredentials,
           offset: 0,
           bytes: tryBytes
         });
         const metaStart = decode_rad_header(bytes);
         if (metaStart) {
           return metaStart;
+        }
+        if (bytes.length < tryBytes) {
+          break;
         }
       }
       throw new Error("Failed to decode RAD header");
@@ -11150,46 +11154,36 @@ class PagedSplats {
         if (this.fileBytes) {
           throw new Error("Chunked RAD file not supported with fileBytes");
         }
-        if (this.fetchBytes) {
-          throw new Error("Chunked RAD file not supported with fetchBytes");
+        if (!this.rootUrl) {
+          throw new Error(
+            "Chunked RAD file needs a rootUrl to resolve its sibling files"
+          );
         }
         const resolvedRoot = new URL(
           this.rootUrl,
           window.location.href
         ).toString();
         const chunkUrl = new URL(filename, resolvedRoot).toString();
-        decodeBytes = await fetchRange({
-          url: chunkUrl,
-          requestHeader: this.requestHeader,
-          withCredentials: this.withCredentials,
-          signal: this.abortController.signal
-        });
+        decodeBytes = await this.readRange({ url: chunkUrl });
       } else {
         offset += chunksStart;
-        if (this.fetchBytes) {
-          decodeBytes = await this.fetchBytes(offset, bytes);
-        } else if (this.fileBytes) {
+        if (this.fileBytes) {
           if (offset < 0 || offset + bytes > this.fileBytes.length) {
             throw new Error(
               `Invalid chunk offset or bytes: ${offset} + ${bytes} > ${this.fileBytes.length}`
             );
           }
           decodeBytes = this.fileBytes.slice(offset, offset + bytes);
-        } else if (this.rootUrl) {
-          decodeBytes = await fetchRange({
-            url: this.rootUrl,
-            requestHeader: this.requestHeader,
-            withCredentials: this.withCredentials,
-            offset,
-            bytes,
-            signal: this.abortController.signal
-          });
         } else {
-          throw new Error("No url, fileBytes or fetchBytes provided");
+          decodeBytes = await this.readRange({
+            url: this.rootUrl,
+            offset,
+            bytes
+          });
         }
       }
-    } else if (this.fetchBytes) {
-      throw new Error("fetchBytes is supported for RAD files only");
+    } else if (this.fetchRange) {
+      throw new Error("fetchRange is supported for RAD files only");
     } else if (this.fileBytes) ;
     else if (this.rootUrl) {
       const url = this.chunkUrl(chunk);

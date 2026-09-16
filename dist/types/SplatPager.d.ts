@@ -3,20 +3,34 @@ import { SplatSource } from './SplatMesh';
 import { ExtResult, PackedResult, RadMeta, SplatEncoding, SplatFileType } from './defines';
 import * as THREE from "three";
 /**
- * Supplies a RAD file's bytes, in place of Spark fetching ranges from a URL.
+ * One range read of a RAD file, as PagedSplats asks for it.
  *
- * Called with a byte range of the file: `(offset, bytes)` asks for
- * `bytes` bytes starting at `offset`, and both undefined asks for the whole
- * file. Returning FEWER bytes than asked for is allowed and means the range
- * ran past the end of the file - the header probe uses that to stop early on
- * a small file - but returning more is not.
+ * `url` is the file to read: `rootUrl`, or the sibling file of a chunked RAD.
+ * It is undefined when PagedSplats was given no `rootUrl`, which is the case
+ * where the consumer itself is the source of the bytes - a member inside a
+ * container, a `File` the user picked, OPFS, IndexedDB.
  *
- * This is the hook for a RAD that is not a plain ranged URL: one stored
- * inside a container or archive, one in OPFS or IndexedDB, one behind
- * bespoke authentication, or a local file the user picked, which has no URL
- * at all and can be read with `File.slice`.
+ * `offset` and `bytes` are the range; both undefined asks for the whole file.
+ * `requestHeader` and `withCredentials` are the ones PagedSplats was built
+ * with, passed on so a replacement can honour them. `signal` is the
+ * PagedSplats' own, aborted on dispose.
  */
-export type FetchBytes = (offset?: number, bytes?: number) => Promise<Uint8Array>;
+export interface FetchRangeRequest {
+    url?: string;
+    offset?: number;
+    bytes?: number;
+    requestHeader?: Record<string, string>;
+    withCredentials?: boolean;
+    signal?: AbortSignal;
+}
+/**
+ * Supplies the bytes of a range, in place of Spark's own ranged fetch.
+ *
+ * Returning FEWER bytes than asked for is allowed and means the range ran
+ * past the end of the file - the header probe uses that to stop early on a
+ * small file - but returning more is not.
+ */
+export type FetchRange = (req: FetchRangeRequest) => Promise<Uint8Array>;
 export interface PagedSplatsOptions {
     pager?: SplatPager;
     rootUrl?: string;
@@ -25,11 +39,14 @@ export interface PagedSplatsOptions {
     fileBytes?: Uint8Array;
     fileType?: SplatFileType;
     /**
-     * Read the file's bytes through this instead of fetching `rootUrl`. RAD
-     * only, and `fileType` must be given because the type cannot be sniffed
-     * before the first read. Sibling-file chunked RAD is not supported.
+     * Read every range through this instead of Spark's own ranged fetch:
+     * decryption, signed requests, a custom CDN, a test double, or a source
+     * that has no URL at all. RAD only.
+     *
+     * With no `rootUrl`, `fileType` must be given - there are no bytes to sniff
+     * before the first read - and the request's `url` is undefined.
      */
-    fetchBytes?: FetchBytes;
+    fetchRange?: FetchRange;
     maxSh?: number;
 }
 export declare class PagedSplats implements SplatSource {
@@ -39,7 +56,7 @@ export declare class PagedSplats implements SplatSource {
     withCredentials?: boolean;
     fileBytes?: Uint8Array;
     fileType?: SplatFileType;
-    fetchBytes?: FetchBytes;
+    fetchRange?: FetchRange;
     numSh: number;
     maxSh: number;
     sh1Codes?: Uint32Array;
@@ -61,6 +78,8 @@ export declare class PagedSplats implements SplatSource {
     constructor(options: PagedSplatsOptions);
     dispose(): void;
     setMaxSh(maxSh: number): void;
+    /** One range read, through the consumer's hook when it set one. */
+    private readRange;
     getRadMeta(): Promise<{
         meta: RadMeta;
         chunksStart: number;
