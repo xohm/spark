@@ -11616,10 +11616,9 @@ const _SplatPager = class _SplatPager {
       }
     }
   }
-  ensureShTextures(numSh) {
-    this.curSh = Math.max(this.curSh, numSh);
+  ensureShTextures(numTextures) {
     const emptyShTextures = this.extSplats ? _SplatPager.emptyExtShTextures : _SplatPager.emptyShTextures;
-    for (let i = 0; i < this.curSh; i++) {
+    for (let i = 0; i < numTextures; i++) {
       if (this.shTextures[i].value === emptyShTextures[i]) {
         const elementsPerSplat = this.shTextures[i].value === _SplatPager.emptyUint32x2 ? 2 : 4;
         this.shTextures[i].value = this.newUint32ArrayTexture(elementsPerSplat);
@@ -11704,8 +11703,8 @@ const _SplatPager = class _SplatPager {
     if (extArray) {
       uploadTextureLayer(this.extTexture, page, pageBase * 4, extArray);
     }
-    const numSh = Math.min(shArrays.length, 3);
-    this.ensureShTextures(numSh);
+    this.curSh = Math.max(this.curSh, Math.min(shArrays.length, 3));
+    this.ensureShTextures(shArrays.length);
     for (let i = 0; i < shArrays.length; i++) {
       const array = shArrays[i];
       const elementsPerSplat = this.shTextures[i].value.format === THREE.RGIntegerFormat ? 2 : 4;
