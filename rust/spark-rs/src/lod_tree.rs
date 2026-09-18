@@ -632,9 +632,10 @@ fn ortho_window(ortho: &[f32], view_to_object: &[f32], origin: Vec3A) -> Option<
 // Dividing by the distance to the eye, as the perspective metric does, makes an
 // ortho view refine whatever is nearest the camera and leave the rest coarse.
 // The lateral bound is the WINDOW, not a cone - an angle is the wrong shape
-// for a parallel projection - with full detail to 1.15x the window and a ramp
-// to cone_foveate at 2x; depth along the view axis is not weighted. (The same
-// rule as solos' desktop cut, pixelScaleOrthoWindow.)
+// for a parallel projection - with full detail to 1.15x the window, a ramp to
+// cone_foveate at 2x, and an inverse-square fall beyond; depth along the view
+// axis is not weighted. (solos' desktop cut, pixelScaleOrthoWindow, plus its
+// ortho box cull, which a traversal that cannot drop nodes has to approximate.)
 fn ortho_pixel_scale(size: f32, center: Vec3A, w: &OrthoWindow, lod_scale: f32, cone_foveate: f32) -> f32 {
     const INNER: f32 = 1.15;
     const OUTER: f32 = 2.0;
@@ -643,7 +644,15 @@ fn ortho_pixel_scale(size: f32, center: Vec3A, w: &OrthoWindow, lod_scale: f32, 
     let foveate = if q <= INNER {
         1.0
     } else if q >= OUTER {
-        cone_foveate
+        // BEYOND THE WINDOW THE DETAIL KEEPS FALLING, as distance makes it fall
+        // in perspective. Held flat at cone_foveate, a zoomed-in ortho view
+        // asked for the whole rest of the scene at 2.5 of its (tiny) pixels -
+        // twenty window-areas of it - and the budget left for the window was a
+        // quarter. The desktop culls outside the ortho box; this traversal
+        // cannot drop a node, only stop refining it, so the far side is drawn
+        // by coarse ancestors that cost next to nothing.
+        let r = OUTER / q;
+        cone_foveate * r * r
     } else {
         let t = (q - INNER) / (OUTER - INNER);
         1.0 + (cone_foveate - 1.0) * t
