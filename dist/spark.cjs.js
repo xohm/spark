@@ -14369,11 +14369,21 @@ const _SparkRenderer = class _SparkRenderer extends THREE__namespace.Mesh {
     }
   }
   async cleanupLodTrees(worker) {
-    var _a2;
+    var _a2, _b2, _c;
     const DISPOSE_TIMEOUT_MS = 3e3;
     const now = performance.now();
+    const live = /* @__PURE__ */ new Set();
+    for (const { mesh } of this.lodMeshes) {
+      const s = ((_a2 = mesh.packedSplats) == null ? void 0 : _a2.lodSplats) ?? ((_b2 = mesh.extSplats) == null ? void 0 : _b2.lodSplats) ?? mesh.paged;
+      if (s) {
+        live.add(s);
+      }
+    }
     let oldest = null;
     for (const [splats, record] of this.lodIds.entries()) {
+      if (live.has(splats)) {
+        continue;
+      }
       if (oldest == null || record.lastTouched < oldest.lastTouched) {
         oldest = {
           splats,
@@ -14394,7 +14404,7 @@ const _SparkRenderer = class _SparkRenderer extends THREE__namespace.Mesh {
       }
     }
     if (oldest.splats instanceof PagedSplats) {
-      (_a2 = this.pager) == null ? void 0 : _a2.removeSplats(oldest.splats);
+      (_c = this.pager) == null ? void 0 : _c.removeSplats(oldest.splats);
     }
     await worker.call("disposeLodTree", { lodId: oldest.lodId });
   }
