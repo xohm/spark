@@ -1538,8 +1538,26 @@ export class SparkRenderer extends THREE.Mesh {
     const DISPOSE_TIMEOUT_MS = 3000;
     const now = performance.now();
 
+    // A TREE A MESH IS STILL DRAWING IS NOT OLD, however long ago it was last
+    // touched. The touch happens in update(); when the render loop has gone
+    // idle (a scene that has settled) or one exclusive job outlasts the
+    // timeout, a live scene's only tree looked abandoned here - and disposing
+    // it threw away every page the scene had streamed, so it streamed again
+    // from the root. Only trees no current mesh uses are candidates.
+    const live = new Set<unknown>();
+    for (const { mesh } of this.lodMeshes) {
+      const s =
+        mesh.packedSplats?.lodSplats ?? mesh.extSplats?.lodSplats ?? mesh.paged;
+      if (s) {
+        live.add(s);
+      }
+    }
+
     let oldest = null;
     for (const [splats, record] of this.lodIds.entries()) {
+      if (live.has(splats)) {
+        continue;
+      }
       if (oldest == null || record.lastTouched < oldest.lastTouched) {
         oldest = {
           splats,
