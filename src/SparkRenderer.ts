@@ -381,6 +381,7 @@ export class SparkRenderer extends THREE.Mesh {
   lodSplatCount?: number;
   lodSplatScale: number;
   lodRenderScale: number;
+  private lodOrtho: number[] = [];
   lodInflate: boolean;
   lodTraverseMode: "dynamic" | "standard";
   pagedExtSplats: boolean;
@@ -1158,6 +1159,20 @@ export class SparkRenderer extends THREE.Mesh {
       const pxX = viewWidth / Math.max(1, this.renderSize.x);
       pixelScaleLimit = Math.min(pxX, pxY);
     }
+    // THE ORTHO WINDOW, in view units: [centreX, centreY, halfW, halfH]. The
+    // LoD traversal measures a node against it instead of dividing by the
+    // distance to the eye, which has no meaning under a parallel projection.
+    if (camera instanceof THREE.OrthographicCamera) {
+      const z = camera.zoom || 1;
+      this.lodOrtho = [
+        (camera.left + camera.right) / 2 / z,
+        (camera.top + camera.bottom) / 2 / z,
+        Math.abs(camera.right - camera.left) / 2 / z,
+        Math.abs(camera.top - camera.bottom) / 2 / z,
+      ];
+    } else {
+      this.lodOrtho = [];
+    }
 
     pixelScaleLimit *= this.lodRenderScale;
 
@@ -1445,6 +1460,7 @@ export class SparkRenderer extends THREE.Mesh {
       lastPixelLimit: this.lastPixelLimit,
       instances,
       traverseMode: this.lodTraverseMode,
+      ortho: this.lodOrtho,
     });
     this.lastTraverseTime = performance.now() - traverseStart;
 
@@ -1517,6 +1533,7 @@ export class SparkRenderer extends THREE.Mesh {
         pixelScaleLimit,
         instances,
         traverseMode: this.lodTraverseMode,
+        ortho: this.lodOrtho,
       });
       const raycastTraverseTime = performance.now() - traverseStart;
 

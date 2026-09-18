@@ -713,6 +713,7 @@ function traverseLodTrees({
   lastPixelLimit,
   instances,
   traverseMode,
+  ortho,
 }: {
   maxSplats: number;
   pixelScaleLimit: number;
@@ -732,6 +733,7 @@ function traverseLodTrees({
     }
   >;
   traverseMode: "dynamic" | "standard";
+  ortho?: number[];
 }) {
   const keyInstances = Object.entries(instances);
   const lodIds = new Uint32Array(
@@ -780,6 +782,7 @@ function traverseLodTrees({
     coneFoveates,
     coneFov0s,
     coneFovs,
+    new Float32Array(ortho ?? []),
   ) as {
     instanceIndices: {
       lodId: number;

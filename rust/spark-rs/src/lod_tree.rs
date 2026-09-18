@@ -415,6 +415,7 @@ pub fn traverse_lod_trees(
     view_to_objects: &[f32], lod_scales: &[f32],
     behind_foveates: &[f32], cone_foveates: &[f32],
     cone_fov0s: &[f32], cone_fovs: &[f32],
+    ortho: &[f32],
 ) -> anyhow::Result<Object, JsValue> {
     let max_splats = max_splats as usize;
     let num_instances = lod_ids.len();
@@ -451,7 +452,8 @@ pub fn traverse_lod_trees(
             let cone_dot0 = if cone_fov0s[index] > 0.0 { (0.5 * cone_fov0s[index].clamp(0.0, 180.0)).to_radians().cos() } else { 1.0 };
             let cone_dot = if cone_fovs[index] > 0.0 { (0.5 * cone_fovs[index].clamp(0.0, 180.0)).to_radians().cos() } else { 1.0 };
             let cone_dot = cone_dot.min(cone_dot0);
-            (lod_id, splats.borrow(), page_to_chunk, chunk_to_page, origin, forward, lod_scale, behind_foveate, cone_foveate, cone_dot0, cone_dot)
+            let window = ortho_window(ortho, &view_to_objects[i16..(i16 + 16)], origin);
+            (lod_id, splats.borrow(), page_to_chunk, chunk_to_page, origin, forward, lod_scale, behind_foveate, cone_foveate, cone_dot0, cone_dot, window)
         }).collect();
 
         let mut num_splats = 0;
@@ -598,12 +600,66 @@ pub fn traverse_lod_trees(
     })
 }
 
+/// An orthographic view's window in OBJECT space: its centre, the unit screen
+/// axes, the half-extents, and the factor that turns an object-space size into
+/// view units. `ortho` is [centreX, centreY, halfW, halfH] in view units, or
+/// empty for a perspective view.
+#[derive(Clone, Copy)]
+struct OrthoWindow { centre: Vec3A, right: Vec3A, up: Vec3A, half_w: f32, half_h: f32, to_view: f32 }
+
+fn ortho_window(ortho: &[f32], view_to_object: &[f32], origin: Vec3A) -> Option<OrthoWindow> {
+    if ortho.len() < 4 || !(ortho[2] > 0.0) || !(ortho[3] > 0.0) {
+        return None;
+    }
+    // The view's x and y columns: one view unit along each screen axis, in
+    // object units - so their length is the view-to-object scale.
+    let right = Vec3A::from_slice(&view_to_object[0..3]);
+    let up = Vec3A::from_slice(&view_to_object[4..7]);
+    let s = right.length().max(1.0e-12);
+    let su = up.length().max(1.0e-12);
+    Some(OrthoWindow {
+        centre: origin + right * ortho[0] + up * ortho[1],
+        right: right / s,
+        up: up / su,
+        half_w: ortho[2] * s,
+        half_h: ortho[3] * su,
+        to_view: 1.0 / s,
+    })
+}
+
+// A PARALLEL PROJECTION maps a world size to pixels with no distance term: the
+// size IS the projected size, and the limit (JS) is view units per pixel.
+// Dividing by the distance to the eye, as the perspective metric does, makes an
+// ortho view refine whatever is nearest the camera and leave the rest coarse.
+// The lateral bound is the WINDOW, not a cone - an angle is the wrong shape
+// for a parallel projection - with full detail to 1.15x the window and a ramp
+// to cone_foveate at 2x; depth along the view axis is not weighted. (The same
+// rule as solos' desktop cut, pixelScaleOrthoWindow.)
+fn ortho_pixel_scale(size: f32, center: Vec3A, w: &OrthoWindow, lod_scale: f32, cone_foveate: f32) -> f32 {
+    const INNER: f32 = 1.15;
+    const OUTER: f32 = 2.0;
+    let delta = center - w.centre;
+    let q = (delta.dot(w.right).abs() / w.half_w).max(delta.dot(w.up).abs() / w.half_h);
+    let foveate = if q <= INNER {
+        1.0
+    } else if q >= OUTER {
+        cone_foveate
+    } else {
+        let t = (q - INNER) / (OUTER - INNER);
+        1.0 + (cone_foveate - 1.0) * t
+    };
+    foveate * size * w.to_view * lod_scale
+}
+
 fn compute_pixel_scale<'a>(
     splat: &LodSplat,
-    instance: &(u32, Ref<'a, Vec<LodSplat>>, &Vec<u32>, &Vec<u32>, Vec3A, Vec3A, f32, f32, f32, f32, f32),
+    instance: &(u32, Ref<'a, Vec<LodSplat>>, &Vec<u32>, &Vec<u32>, Vec3A, Vec3A, f32, f32, f32, f32, f32, Option<OrthoWindow>),
 ) -> f32 {
-    let &(_, _, _, _, origin, forward, lod_scale, behind_foveate, cone_foveate, cone_dot0, cone_dot) = instance;
+    let &(_, _, _, _, origin, forward, lod_scale, behind_foveate, cone_foveate, cone_dot0, cone_dot, window) = instance;
     let center = splat.center();
+    if let Some(w) = window {
+        return ortho_pixel_scale(splat.size(), center, &w, lod_scale, cone_foveate);
+    }
     let delta = center - origin;
     let distance = delta.length().max(1.0e-6);
     let inv_distance = 1.0 / distance;
@@ -636,6 +692,7 @@ pub fn dynamic_traverse_lod_trees(
     view_to_objects: &[f32], lod_scales: &[f32],
     behind_foveates: &[f32], cone_foveates: &[f32],
     cone_fov0s: &[f32], cone_fovs: &[f32],
+    ortho: &[f32],
     // readback: Uint32Array,
     // flag: bool,
 ) -> anyhow::Result<Object, JsValue> {
@@ -674,7 +731,8 @@ pub fn dynamic_traverse_lod_trees(
             let cone_foveate = cone_foveates[index];
             let cone_dot0 = if cone_fov0s[index] > 0.0 { (0.5 * cone_fov0s[index]).to_radians().cos() } else { 1.0 };
             let cone_dot = if cone_fovs[index] > 0.0 { (0.5 * cone_fovs[index]).to_radians().cos() } else { 1.0 };
-            (lod_id, splats.borrow(), page_to_chunk, chunk_to_page, origin, forward, lod_scale, behind_foveate, cone_foveate, cone_dot0, cone_dot)
+            let window = ortho_window(ortho, &view_to_objects[i16..(i16 + 16)], origin);
+            (lod_id, splats.borrow(), page_to_chunk, chunk_to_page, origin, forward, lod_scale, behind_foveate, cone_foveate, cone_dot0, cone_dot, window)
         }).collect();
 
         let mut lod_chunk_max: AHashMap<u32, Vec<f32>> = AHashMap::new();
