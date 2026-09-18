@@ -140,7 +140,7 @@ declare function updateLodTrees({ ranges, }: {
         lodTreeData?: Uint32Array;
     }[];
 }): void;
-declare function traverseLodTrees({ maxSplats, pixelScaleLimit, lastPixelLimit, instances, traverseMode, }: {
+declare function traverseLodTrees({ maxSplats, pixelScaleLimit, lastPixelLimit, instances, traverseMode, ortho, }: {
     maxSplats: number;
     pixelScaleLimit: number;
     lastPixelLimit?: number;
@@ -156,6 +156,7 @@ declare function traverseLodTrees({ maxSplats, pixelScaleLimit, lastPixelLimit, 
         coneFoveate: number;
     }>;
     traverseMode: "dynamic" | "standard";
+    ortho?: number[];
 }): {
     keyIndices: Record<string, {
         lodId: number;

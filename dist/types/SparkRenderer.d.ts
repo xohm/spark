@@ -342,6 +342,7 @@ export declare class SparkRenderer extends THREE.Mesh {
     lodSplatCount?: number;
     lodSplatScale: number;
     lodRenderScale: number;
+    private lodOrtho;
     lodInflate: boolean;
     lodTraverseMode: "dynamic" | "standard";
     pagedExtSplats: boolean;
